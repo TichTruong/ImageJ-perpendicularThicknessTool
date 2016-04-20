@@ -1,0 +1,342 @@
+// MAIN CODE
+
+// Resetting boxes (Results, ROI Manager)
+resetBoxes();
+
+// Introduction dialog boxes
+// Reference: http://rsb.info.nih.gov/ij/developer/macro/functions.html
+Dialog.create("Collagen Thickness Macro");
+Dialog.addMessage("Welcome to the Collagen Thickness Macro!\n"
+	+"Created by Tich Truong, truont@mcmaster.ca.\n"
+	 +"Last modified on 20 January 2016. Version 27.");
+Dialog.addMessage("Dialog boxes will pop up and guide your through this macro.");
+Dialog.addMessage("Press OK to continue");
+Dialog.show();
+
+waitForUser("Step 1) Open your image using File > Open.\n"
+		+" \n" //space
+		+"Step 2) Locate your sample of interest.\n"
+		+" \n"
+		+"Step 3) Rotate your sample such that it is as horizontal as posible. Image > Transform > Rotate.\n"
+		+" \n"
+		+"Step 4) Using the SEGMENTED LINE TOOL, draw* the lower boundary along the collagen.\n"
+		+"*DO NOT have the segmented lines overlap.\n"
+		+"*Double left-click (or single right-click) to apply the last point.\n"
+		+" \n"
+		+"Press OK to continue");
+
+// Record the coordinates of the BOTTOM BOUNDARY specified by user.
+// Reference; http://imagej.1557.x6.nabble.com/How-to-export-imagej-multi-point-selection-coordinates-td3687663.html
+getSelectionCoordinates(bot_xCoordinates, bot_yCoordinates);
+drawSegments(bot_xCoordinates, bot_yCoordinates);
+
+// Record the coordinates of the upper boundary specified by user.
+waitForUser("Step 5) Select upper boundary using SEGMENTED LINE TOOL*.\n"
+		+"*Make sure upper boundary extends beyond the lower boundary.\n"
+		+" \n"
+		+"Press OK to continue.");
+getSelectionCoordinates(top_xCoordinates, top_yCoordinates);
+
+drawfitTopBoundary(top_xCoordinates, top_yCoordinates);							//draw polynomial fit
+
+// User specifies distance along the segment lines
+Dialog.create("Step 6) Measurement increments");
+Dialog.addMessage("Step 6) Specify the measurement parameters.");
+Dialog.addNumber("Distance between measurements on each segment (pixels): ", 3);
+Dialog.addMessage("The larger the distance, the more measurements will be taken, but it will take longer to calculate.");
+Dialog.addMessage(" \n");
+
+Dialog.addNumber("Sensitivity/Limit of detection (pixels): ", 1);
+Dialog.addMessage("The smaller the sensitivity, the more accurate the measurement, but it will take longer to calculate.\n"
+			+" \n"
+			+"**Be careful with using low values because this increases the risk of the program not stopping (INFINITE LOOP).\n"
+			+"If this happens, press ESC to end the program.");
+Dialog.show();
+perInc = Dialog.getNumber();										//increment along bottom boundary segment
+tolerance = Dialog.getNumber();
+
+j = 0;			//counter for Result dialog box
+thickness = 0;		//counter for thickness values
+
+// Creating and calculating the perpendicular lines
+for(i=0; i<lengthOf(bot_xCoordinates)-1; i++) //this is so perpendicular lines are made for all line segments
+{
+	//Specifying first two points
+	x1 = bot_xCoordinates[i];
+	x2 = bot_xCoordinates[i+1];
+	y1 = bot_yCoordinates[i];
+	y2 = bot_yCoordinates[i+1];
+
+	//Determine equation for first segment of boundary line. This equation is the same for every division of the segment.
+	m1 = (y2-y1) / (x2-x1);
+	b1 = y1-m1*x1;
+
+	// Equation for perpendicular line
+	m_per = -1/m1; 											//perpendicular line is negative reciprocal
+	b_per = y1-m_per*x1; 										//intercept of perpendicular line
+
+	// MOVING ALONG THE SEGMENTED LINE
+	// Determining the number of divisions in the line segment
+	lengthLine = lineLength(x1, x2, y1, y2);
+	
+	//Go through each division of the line
+	while(x1<x2)
+	{
+		//Check direction of perpendicular projection
+		check1_x = x1;										//check point 1, on the lower boundary curve
+		check1_y = y1;
+
+		//Everytime x shifts, there is a new equation (new b) even though slope stays the same.
+		b_per = y1-m_per*x1; 									//intercept of perpendicular line
+		
+		check2_x = check1_x + 0.1;								//check point 2, 0.1 units perpendicularily away from the check point 1
+		check2_y = m_per*check2_x + b_per;
+		
+		// Check points on the fitted curve
+		fit_check1_x = check1_x;
+		fit_check1_y = fitEquation(check1_x, top_xCoordinates, top_yCoordinates);		//finding y at x, while using fitting line coordinates
+
+		fit_check2_x = check2_x;
+		fit_check2_y = fitEquation(check2_x, top_xCoordinates, top_yCoordinates);
+		
+		distance1 = lineLength(check1_x, check1_y, fit_check1_x, fit_check1_y);
+		distance2 = lineLength(check2_x, check2_y, fit_check2_x, fit_check2_y);
+		
+		w = 0.05;										//length for perpendicular line
+
+		// Check distance and measure perpendicular length to fitted curve
+		if (distance1 > distance2)
+		{
+			x_per = x1;
+			y_per = 0;		//initiating for storage
+			while(distance2 > tolerance)
+			{
+				x_per = x_per+w; 							//new x_per
+				y_per = m_per*x_per + b_per; 						//new y_per
+				x_fit = x_per;								//uses same x value because intercept when x1=x2
+				y_fit = fitEquation(x_fit, top_xCoordinates, top_yCoordinates);
+				drawLine(x1, y1, x_per, y_per);
+				distance2 = lineLength(x_per, y_per, x_fit, y_fit);
+			}
+			thickness = thickness + lineLength(x1, y1, x_per, y_per);
+			drawLine(x1, y1, x_per, y_per);
+	
+			//Output result
+			setResult("Thickness (px)", j, lineLength(x1, y1, x_per, y_per));
+			j = j+1;
+			updateResults();
+		}
+		else if(distance1 < distance2) //distance1 < distance2 so you subtract i each time
+		{
+			w = -w;			
+		 	
+			//get new distance 2 so that it is > distance1 or else it will be in an infinite loop
+			x_per = x1 + w;
+			y_per = m_per*x_per + b_per;
+			x_fit = x_per;		
+			y_fit = fitEquation(x_fit, top_xCoordinates, top_yCoordinates);
+			distance2 = lineLength(x_per, y_per, x_fit, y_fit);
+	
+			while(distance2 > tolerance)
+			{
+				x_per = x_per+w; 							//new x_per
+				y_per = m_per*x_per + b_per; 						//new y_per
+				x_fit = x_per;								//uses same x value because intercept when x1=x2
+				y_fit = fitEquation(x_fit, top_xCoordinates, top_yCoordinates);
+				drawLine(x1, y1, x_per, y_per);
+				distance2 = lineLength(x_per, y_per, x_fit, y_fit);
+			}
+			thickness = thickness + lineLength(x1, y1, x_per, y_per);
+			drawLine(x1, y1, x_per, y_per);
+
+			//Output result
+			setResult("Thickness (px)", j, lineLength(x1, y1, x_per, y_per));
+			j = j+1;
+			updateResults();
+	
+		}
+		else //For horizontal lines. This means that perpendicular line is at x.
+		{
+			x_per = x1;
+			y_per = m_per*x_per + b_per;
+			x_fit = x_per;		
+			y_fit = fitEquation(x_fit, top_xCoordinates, top_yCoordinates);
+			
+			thickness = thickness + lineLength(x1, y1, x_fit, y_fit);
+			drawLine(x1, y1, x_fit, y_fit);
+
+			//Output result
+			setResult("Thickness (px)", j, lineLength(x1, y1, x_fit, y_fit));
+			j = j+1;
+			updateResults();
+		}
+
+		//Moving to next increment
+		x1 = x1 + perInc*cos(getAngle(x1, y1, x2, y2)*(PI/180));				//cos macro accepts radians, therefore need to convert the angle to radians.
+		y1 = m1*x1 + b1;
+	}
+}
+setResult("Total Thickness (px)", 0, thickness);
+setResult("Number of measurements", 0, j);
+setResult("Average thickness (px)", 0, thickness/j);
+totalLength = measureBottomBoundary(bot_xCoordinates, bot_yCoordinates);
+setResult("Average thickness/total length", 0, (thickness/j)/totalLength);
+
+print("Macro ran successfully!\n"
+	+"Make sure to convert the measurements (pixels) into actual units (cm, um, nm, etc).");
+exit();
+
+// FUNCTIONS
+// Drawling fitted polynomial to the inputs (top boundary line) specified by the user.
+function drawfitTopBoundary(x, y)
+{
+	//If linear equation (top boundary), use 1st order
+	if(lengthOf(x)==1)
+	{
+		Fit.doFit(0, x, y);		
+		for (i=x[0]; i<=x[lengthOf(x)-1]; i++)
+		{
+			drawLine(i, Fit.f(i), (i+1), Fit.f(i+1));
+			updateDisplay();
+		}
+	}
+	else if(lengthOf(x)==2)
+	{
+		Fit.doFit(1, x, y);		
+		for (i=x[0]; i<=x[lengthOf(x)-1]; i++)
+		{
+			drawLine(i, Fit.f(i), (i+1), Fit.f(i+1));
+			updateDisplay();
+		}
+	}
+	else
+	{
+		Fit.doFit(2, x, y);		
+		for (i=x[0]; i<=x[lengthOf(x)-1]; i++)
+		{
+			drawLine(i, Fit.f(i), (i+1), Fit.f(i+1));
+			updateDisplay();
+		}
+	}
+
+}
+
+// Draw segments made by user
+function drawSegments(x,y)
+{
+	for (i=0; i<lengthOf(x)-1; i++)
+	{
+		drawLine(x[i], y[i], x[i+1], y[i+1]);
+		updateDisplay();
+	}
+}
+
+// y output for fitted 3rd order polynomial
+function fitEquation(point, x, y)
+{
+	if(lengthOf(x)==1)					//If linear equation (top boundary), use 1st order
+	{
+		Fit.doFit(0,x,y);
+		return Fit.f(point);
+	}
+	else if(lengthOf(x)==2)					//If parabolic equation (top boundary), use 2nd order
+	{	
+		Fit.doFit(1,x,y);
+		return Fit.f(point);
+	}
+	else
+	{
+		Fit.doFit(3, x, y);				//Fit 3rd order polynomial (2 = 3rd order) for all others
+		return Fit.f(point);		
+	}
+}
+
+//Returns the angle in degrees
+//Small portion of code used
+//Ref: http://rsb.info.nih.gov/ij/macros/Measure_Angle_And_Length.txt
+function getAngle(X1, Y1, X2, Y2)
+{
+	q1=0; q2orq3=2; q4=3; //quadrant
+	dx = X2-X1;
+	dy = Y1-Y2;
+	
+	if (dx!=0)
+	{
+		angle = atan(dy/dx);
+	}	
+	else 
+	{
+		if (dy>=0)
+		{
+			angle = PI/2;
+		}
+		else
+		{
+			angle = -PI/2;
+		}
+	}
+	angle = (180/PI)*angle;
+
+	if (dx>=0 && dy>=0)
+	{
+		quadrant = q1;
+	}
+	else if (dx<0)
+	{
+		quadrant = q2orq3;
+	}	
+	else
+	{
+		quadrant = q4;
+	}
+	
+	if (quadrant==q2orq3)
+	{
+		angle = angle+180.0;
+	}
+	else if (quadrant==q4)
+	{
+		angle = angle+360.0;
+	}
+	
+	return angle
+}
+
+// Calculates c from c^2 = a^2 + b^2
+function lineLength(x1,y1,x2,y2)
+{
+	l = sqrt( (x1-x2)*(x1-x2) + (y1-y2)*(y1-y2));
+	return l;
+}
+
+// Measures total length of the bottom boundary
+function measureBottomBoundary(x, y)
+{
+	totLength = 0;
+	for(i=0; i<lengthOf(x)-1; i++)
+	{
+		totLength = totLength + sqrt(((x[i]-x[i+1])*(x[i]-x[i+1]))+((y[i]-y[i+1])*(y[i]-y[i+1])));
+	}
+	setResult("Total Length (px)", 0, totLength);
+	return totLength;
+}
+
+// Closes opened Result box
+function resetBoxes()
+{
+	// resetting image back to original
+	//run("Revert");				\\Can be a problem if you rotate the image before running the program
+
+	// closing results box
+	if (isOpen("Results"))
+	{
+		selectWindow("Results");
+		run("Close");
+	}
+
+	if (isOpen("Log"))
+	{
+		selectWindow("Log");
+		run("Close");
+	}
+}
