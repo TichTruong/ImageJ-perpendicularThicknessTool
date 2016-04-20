@@ -1,3 +1,7 @@
+// Licenses information: MIT Licenses
+// DOI: 10.5181/zenodo.50133
+// Last updated: 20 April 2016
+
 // MAIN CODE
 
 // Resetting boxes (Results, ROI Manager)
